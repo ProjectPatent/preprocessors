@@ -1,63 +1,105 @@
-"""
+'''
 데이터 전처리하는 모듈
-"""
+'''
 
 from lxml import etree
 
 from utils.time_utils import get_today_yymmdd, is_yymmdd_format
-from projectKer.config.config import api_params
+from config.config import api_params
 
 class DataParser():
-    """
+    '''
     XML 파일을 읽고 데이터를 전처리하는 클래스입니다.
-    """
+    '''
 
     def __init__(self, path, date=None):
         self.path = path
-        self.corp_data_list = []
-        self.univ_data_list = []
+        self.ipr_reg_data_list = []
+        self.ipc_cpc_data_list = []
+        self.priority_data_list = []
+        
         if date is not None and is_yymmdd_format(date):
             self.date = date
         else:
             self.date = get_today_yymmdd()
         
-    def xml_to_list(self):
-        """
+    def xml_to_list(self, data_class='corp'):
+        '''
         기업, 대학 | 특허/실용신안, 디자인, 상표 xml파일을 읽어서 데이터를 리턴
-        """
-        
-        # 기업
-        self.read_xml(data_target='patent_utility',  data_class='corp')
-        # self.read_xml(data_target='design_path', data_class='corp')
-        # self.read_xml(data_target='trademark_path', data_class='corp')
-        # # 대학
-        # self.read_xml(data_target='patent_utility',  data_class='univ')
-        # self.read_xml(data_target='design_path', data_class='univ')
-        # self.read_xml(data_target='trademark_path', data_class='univ')
+        input : data_service : patent_utility (특허/실용신안)
+                             design (디자인)
+                             trademark (상표)
+                data_class : corp (기업)
+                             univ (대학)
+        '''
+
+        self.ipr_reg_parser(data_service='patent_utility',  data_class=data_class)
+        self.ipr_reg_parser(data_service='design_path', data_class=data_class)
+        self.ipr_reg_parser(data_service='trademark_path', data_class=data_class)
+
+        return self.ipr_reg_data_list, self.ipc_cpc_data_list, self.priority_data_list
 
 
-    def read_xml(self, data_target, data_class):
-        path = f"{self.path}/{self.date}_{data_target}_{data_class}.xml"
+    def ipr_reg_parser(self, data_service, data_class):
+        '''
+        data_service에 해당하는 파라미터에 맞춰서 클래스 변수에 저장합니다.
+        서브 테이블인 ipc_code, priority 함수를 호출해서 함께 저장합니다.
+        input : data_service : patent_utility (특허/실용신안)
+                               design (디자인)
+                               trademark (상표)
+                data_class : corp (기업)
+                             univ (대학)
+        '''
+        path = f'{self.path}/{self.date}_{data_service}_{data_class}.xml'
+        # try:
         tree = etree.parse(path)
         root = tree.getroot()
+        temp = None
         for item in root.iter('item'):
-            temp = {}
-            for key, value in api_params["patent_utility"].items():
-                temp[f"{key}"] = item.find(f".//{value}").text
-            self.corp_data_list.append(temp)
+            if data_service == 'patent_utility':
+                temp = self.ipc_cpc_parser(item)
+            elif data_service in ('design', 'trademark'):
+                temp = self.priority_parser(item)
+            if temp is not None:
+                self.ipr_reg_data_list.append(temp)
 
-    # def read_data_design_data(self, data_path, data_class):
-    #     path = data_path + f"{data_class}.xml"
-    #     pass
+    def ipc_cpc_parser(self, item):
+        '''
+        ipc_code가 있다면 클래스 변수 (ipc_cpc_data_list)에 저장합니다.
+        ipr_reg_data_list에 대한 key, value값을 딕셔너리에 저장 후 리턴합니다.
+        '''
 
-    # def read_data_trademark_data(self, data_path, data_class):
-    #     path = data_path + f"{data_class}.xml"
-    #     pass
+        temp = {}
+        for key, value in api_params['patent_utility'].items():
+            if value == 'ipcNumber':
+                ipc_codes = item.find(f'.//{value}').text.split('|')
+                temp[f'{key}'] = ipc_codes[0]
+            else:
+                temp[f'{key}'] = item.find(f'.//{value}').text
+        for code in ipc_codes:
+            self.ipc_cpc_data_list.append({
+                'appl_no' : temp['appl_no'], 
+                'ipc_cpc' : code[0],
+                'ipc_cpc_code' : code
+            })
 
+        return temp
 
+    def priority_parser(self, item):
+        '''
+        priority에 대한 데이터가 존재한다면 클래스 변수(priority_data_list)에 저장합니다.
+        ipr_reg_data_list에 대한 key, value값을 딕셔너리에 저장 후 리턴합니다.
+        '''
 
-# print(DataParser().date)
-data_path = "./data"
-data_parser = DataParser(data_path)
-data_parser.xml_to_list()
-print(data_parser.corp_data_list)
+        temp = {}
+        for key, value in api_params['patent_utility'].items():
+            temp[f'{key}'] = item.find(f'.//{value}').text
+
+        if temp['priority_no'] is not None and temp['priority_date']:
+            self.priority_data_list.append({
+                'appl_no' : temp['appl_no'],
+                'priority_no' : temp['priorityNumber'], 
+                'priority_date' : temp['priorityDate'], 
+            })
+
+        return temp
